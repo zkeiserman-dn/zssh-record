@@ -1,0 +1,12 @@
+# local state and recordings (never commit)
+.zssh-state
+*.log
+*.timing
+*.bak
+*.new
+*.orig
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
