@@ -11,6 +11,21 @@ zssh_load_state() {
   fi
 }
 
+# Ask the user whether to continue on the cached Epic+Task.
+# Returns 0 if the cached values should be reused, 1 otherwise
+# (no cached state, empty values, or user answered "n").
+zssh_confirm_continue() {
+  if [ -z "$ZSSH_LAST_EPIC" ] || [ -z "$ZSSH_LAST_TASK" ]; then
+    return 1
+  fi
+  printf 'Continue on %s / %s ? [Y/n]: ' "$ZSSH_LAST_EPIC" "$ZSSH_LAST_TASK" >&2
+  read -r ans || return 1
+  case "$ans" in
+    n|N|no|NO|No) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 zssh_save_state() {
   cat > "$STATE_FILE" <<EOF
 ZSSH_LAST_EPIC="$ZSSH_EPIC"

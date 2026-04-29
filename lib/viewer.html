@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zssh-record live viewer</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel2: #1b232c;
+    --fg: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --warn: #e3b341;
+    --error: #f85149;
+    --info: #56d364;
+    --debug: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 13px; line-height: 1.45;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid #30363d;
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 {
+    margin: 0; font-size: 14px; font-weight: 600; color: var(--accent);
+  }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .meta b { color: var(--fg); font-weight: 600; }
+  main {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    height: calc(100vh - 41px);
+  }
+  #ssh { border-bottom: 1px solid #30363d; }
+  #bottom {
+    display: grid; grid-template-columns: 1fr 1fr;
+    height: 45vh; min-height: 220px;
+  }
+  .pane {
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    background: var(--panel);
+  }
+  .pane + .pane { border-left: 1px solid #30363d; }
+  .pane .title {
+    padding: 6px 10px; background: var(--panel2); color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    border-bottom: 1px solid #30363d;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pane .title .status { font-size: 10px; color: var(--info); }
+  .pane .title .status.off { color: var(--error); }
+  pre.log {
+    margin: 0; padding: 8px 12px; flex: 1; overflow: auto;
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--bg); color: var(--fg);
+  }
+  .l-error { color: var(--error); }
+  .l-warn  { color: var(--warn); }
+  .l-info  { color: var(--info); }
+  .l-debug { color: var(--debug); }
+  /* tiny scrollbar */
+  pre.log::-webkit-scrollbar { width: 10px; }
+  pre.log::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>zssh-record</h1>
+  <div class="meta">
+    <span>epic <b id="m-epic">-</b></span> |
+    <span>task <b id="m-task">-</b></span> |
+    <span>target <b id="m-target">-</b></span> |
+    <span>started <b id="m-started">-</b></span>
+  </div>
+</header>
+
+<main>
+  <section class="pane" id="ssh">
+    <div class="title">
+      <span>ssh session  (session.log)</span>
+      <span class="status" id="s-session">live</span>
+    </div>
+    <pre class="log" id="log-session"></pre>
+  </section>
+
+  <section id="bottom">
+    <section class="pane">
+      <div class="title">
+        <span>wb_agent  (wb_agent.log)</span>
+        <span class="status" id="s-wb">live</span>
+      </div>
+      <pre class="log" id="log-wb"></pre>
+    </section>
+    <section class="pane">
+      <div class="title">
+        <span>wb_fe_agent  (wb_fe_agent.log)</span>
+        <span class="status" id="s-fe">live</span>
+      </div>
+      <pre class="log" id="log-fe"></pre>
+    </section>
+  </section>
+</main>
+
+<script>
+  const RX_ERROR = /(ERROR|FATAL|CRIT|panic|Traceback)/;
+  const RX_WARN  = /(WARN(ING)?)/i;
+  const RX_INFO  = /(INFO)/;
+  const RX_DEBUG = /(DEBUG|TRACE)/;
+  // strip CSI ANSI escape sequences (we re-color in CSS)
+  const RX_ANSI  = /\x1B\[[0-9;]*[A-Za-z]/g;
+
+  function classify(line) {
+    if (RX_ERROR.test(line)) return 'l-error';
+    if (RX_WARN.test(line))  return 'l-warn';
+    if (RX_INFO.test(line))  return 'l-info';
+    if (RX_DEBUG.test(line)) return 'l-debug';
+    return '';
+  }
+
+  function attach(streamName, paneId, statusId) {
+    const pane = document.getElementById(paneId);
+    const status = document.getElementById(statusId);
+    let pinned = true;
+
+    pane.addEventListener('scroll', () => {
+      pinned = (pane.scrollTop + pane.clientHeight + 4) >= pane.scrollHeight;
+    });
+
+    const es = new EventSource('/stream/' + streamName);
+    es.onmessage = (ev) => {
+      const raw = ev.data.replace(RX_ANSI, '');
+      const cls = classify(raw);
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.appendChild(document.createTextNode(raw + '\n'));
+      pane.appendChild(span);
+      if (pinned) pane.scrollTop = pane.scrollHeight;
+    };
+    es.onerror = () => {
+      status.textContent = 'closed';
+      status.classList.add('off');
+    };
+  }
+
+  fetch('/meta.json').then(r => r.json()).then(m => {
+    if (m.epic)        document.getElementById('m-epic').textContent    = m.epic;
+    if (m.task)        document.getElementById('m-task').textContent    = m.task;
+    if (m.target)      document.getElementById('m-target').textContent  = m.target;
+    if (m.started_at)  document.getElementById('m-started').textContent = m.started_at;
+    document.title = `zssh: ${m.epic||'?'} / ${m.task||'?'} / ${m.target||'?'}`;
+  }).catch(()=>{});
+
+  attach('session', 'log-session', 's-session');
+  attach('wb',      'log-wb',      's-wb');
+  attach('fe',      'log-fe',      's-fe');
+</script>
+</body>
+</html>

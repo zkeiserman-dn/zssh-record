@@ -48,10 +48,15 @@ if [ "$ZSSH_SELF_UPDATE" = "1" ] && [ -d "$ZSSH_DIR/.git" ]; then
     && git -c advice.detachedHead=false reset --hard --quiet origin/main 2>/dev/null ) || true
 fi
 
-# 2) sticky epic + task prompts
+# 2) sticky epic + task prompts: confirm continue first, only ask if "no" / no state
 zssh_load_state
-zssh_prompt_epic
-zssh_prompt_task
+if zssh_confirm_continue; then
+  ZSSH_EPIC="$ZSSH_LAST_EPIC"
+  ZSSH_TASK="$ZSSH_LAST_TASK"
+else
+  zssh_prompt_epic
+  zssh_prompt_task
+fi
 zssh_save_state
 
 # 3) folder layout
@@ -94,6 +99,23 @@ top_cmd="script -q -t \"$timing\" \"$session_log\" ssh -o StrictHostKeyChecking=
 left_cmd="ssh -o StrictHostKeyChecking=no \"${ZSSH_USER}@${target}\" '$ZSSH_WB_AGENT_CMD' 2>&1 | bash \"$colorize_path\" stream | tee \"$wb_log\""
 right_cmd="ssh -o StrictHostKeyChecking=no \"${ZSSH_USER}@${target}\" '$ZSSH_WB_FE_AGENT_CMD' 2>&1 | bash \"$colorize_path\" stream | tee \"$fe_log\""
 
+# pre-create empty log files so the viewer / tail can open them immediately
+: > "$wb_log"
+: > "$fe_log"
+: > "$session_log"
+
+# 5) optional live HTML viewer (`ssh -rv ...` sets ZSSH_VIEWER=1)
+ZSSH_VIEWER_PID=""
+if [ "${ZSSH_VIEWER:-0}" = "1" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    "$ZSSH_DIR/lib/viewer.sh" "$out_dir" &
+    ZSSH_VIEWER_PID=$!
+    trap 'kill $ZSSH_VIEWER_PID 2>/dev/null || true' EXIT
+  else
+    echo "[zssh] python3 not found - skipping HTML viewer"
+  fi
+fi
+
 if ! command -v tmux >/dev/null 2>&1; then
   echo "[zssh] tmux not found - falling back to plain recorded ssh (no side log panes)"
   echo "[zssh] install tmux:  brew install tmux"
@@ -109,5 +131,6 @@ tmux set-option -t "$session_name" mouse on
 tmux attach -t "$session_name"
 
 # cleanup pointer
+[ -n "$ZSSH_VIEWER_PID" ] && kill "$ZSSH_VIEWER_PID" 2>/dev/null || true
 echo
 echo "[zssh] session ended: $out_dir"

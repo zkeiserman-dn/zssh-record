@@ -4,9 +4,11 @@ Auto-record SSH sessions to DNOS lab devices, organized by Jira **Epic** and **T
 
 ```
 ssh -r YE21F5VV0000EP2
-   Epic   [SW-217283]:                   <- defaults to your last epic
-   Task   (e.g. SW-262109): SW-262109
+   Continue on SW-217283 / SW-262109 ? [Y/n]:        <- one keystroke if same epic+task
    recording: ~/zohar/SW-217283/SW-262109/20260429-104812-YE21F5VV0000EP2/
+
+ssh -rv YE21F5VV0000EP2                              <- same as -r, plus live HTML viewer
+   viewer:    http://127.0.0.1:<port>/   (browser opens automatically)
 ```
 
 You get one tmux session with three panes:
@@ -21,6 +23,19 @@ You get one tmux session with three panes:
 ```
 
 Yellow = WARN, red = ERROR/FATAL, green = INFO, dim = DEBUG.
+
+With `-rv` you also get a browser tab fed by Server-Sent Events:
+
+```
++-----------------------------------------------------------+
+|  zssh-record   epic SW-217283 | task SW-262109 | target.. |
++-----------------------------------------------------------+
+|  ssh session  (live tail of session.log, colorized)       |
+|                                                           |
++-------------------------+---------------------------------+
+|  wb_agent (live)        |  wb_fe_agent (live)             |
++-------------------------+---------------------------------+
+```
 
 ---
 
@@ -46,18 +61,22 @@ Open a new terminal (or `source ~/.zshrc`) once after install.
 ## Use
 
 ```bash
-ssh -r 100.64.x.y           # IP
-ssh -r YE21F5VV0000EP2      # serial / hostname
+ssh -r  100.64.x.y           # IP, terminal-only recorder
+ssh -r  YE21F5VV0000EP2      # serial / hostname
+ssh -rv YE21F5VV0000EP2      # same + live HTML viewer in your browser
 ```
 
-The tool prompts you the first time for:
+On launch:
 
-| Field | Example |
-|---|---|
-| Epic | `SW-217283` |
-| Testing Task | `SW-262109` |
+- **First time** (no cached state) you're asked once for the **Epic** (e.g. `SW-217283`) and the **Testing Task** (e.g. `SW-262109`).
+- **Every subsequent launch** asks one question only:
+  ```
+  Continue on SW-217283 / SW-262109 ? [Y/n]:
+  ```
+  - Press Enter or `y` -> reuse, no further prompts.
+  - Type `n` -> drops into the two prompts so you can switch tickets.
 
-Both are remembered in `~/.zssh-state`; press Enter at the prompts to reuse them. If you switch tickets, just type the new ID — IDs are auto-normalized (`sw217283` -> `SW-217283`).
+State is cached in `~/.zssh-state`. Jira IDs are auto-normalized (`sw217283` -> `SW-217283`).
 
 Each session creates:
 
@@ -107,6 +126,22 @@ Default commands are wrapped through DNOS `request shell` to be portable across 
 
 ---
 
+## Live HTML viewer (`-rv`)
+
+When you run `ssh -rv <target>`, a tiny stdlib HTTP server is started on `127.0.0.1:<random-free-port>` and your default browser opens to it. The page has three live, colorized, auto-scrolling panes:
+
+| Pane | Source |
+|---|---|
+| ssh session | `session.log` (typescript) |
+| wb_agent    | `wb_agent.log` |
+| wb_fe_agent | `wb_fe_agent.log` |
+
+The page consumes three Server-Sent Event streams (`/stream/session`, `/stream/wb`, `/stream/fe`) and re-applies the same coloring rules as the tmux pane (yellow WARN, red ERROR/FATAL/Traceback, green INFO, dim DEBUG/TRACE). Closing the tab does not stop recording. The HTTP server is bound to localhost and is killed automatically when you exit the SSH session.
+
+If `python3` isn't installed, `-rv` quietly degrades to plain `-r`.
+
+---
+
 ## Auto-update
 
 On every launch, `zssh.sh` does a non-blocking `git fetch + git reset origin/main` against this repo. To pin a version, set `ZSSH_SELF_UPDATE=0` in `~/.zssh.conf`.
@@ -120,11 +155,14 @@ The current version is in [`VERSION`](VERSION).
 ```
 zssh-record/
 ├── zssh.sh            # main entry; recorder + tmux launcher
-├── zssh-fn.sh         # `ssh -r ...` shell hook (sourced from ~/.zshrc)
+├── zssh-fn.sh         # `ssh -r` / `ssh -rv` shell hook (sourced from ~/.zshrc)
 ├── install.sh         # one-time installer
 ├── lib/
-│   ├── prompt.sh      # sticky epic/task prompts + Jira-id normalization
-│   └── colorize.sh    # awk colorizer (red=ERROR, yellow=WARN, ...)
+│   ├── prompt.sh      # sticky epic/task prompts + Y/n confirm + Jira-id normalization
+│   ├── colorize.sh    # awk colorizer (red=ERROR, yellow=WARN, ...)
+│   ├── viewer.sh      # picks free port, copies index.html, opens browser, exec viewer.py
+│   ├── viewer.py      # stdlib HTTP+SSE server (127.0.0.1 only)
+│   └── viewer.html    # 3-pane live HTML viewer
 ├── VERSION
 ├── CHANGELOG.md
 ├── LICENSE
@@ -141,7 +179,11 @@ zssh-record/
 
 **`tmux: command not found`** -> falls back to plain `script`-recorded SSH (no side panes). Install tmux to get the full layout.
 
-**Wrong epic/task picked up** -> blow away the cache: `rm ~/.zssh-state`.
+**Wrong epic/task picked up** -> answer `n` at the `Continue on … [Y/n]:` prompt, or blow away the cache: `rm ~/.zssh-state`.
+
+**`-rv` browser tab shows "stream closed"** -> the SSH session ended; the viewer process is shut down on exit by design. Re-open with another `ssh -rv <target>`.
+
+**`-rv` did not open the browser** -> the URL is printed in your terminal as `[zssh-viewer] http://127.0.0.1:<port>/`. Paste it manually.
 
 ---
 
