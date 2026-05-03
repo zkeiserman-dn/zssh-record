@@ -28,32 +28,28 @@
     padding: 8px 14px; background: var(--panel); border-bottom: 1px solid #30363d;
     position: sticky; top: 0; z-index: 5;
   }
-  header h1 {
-    margin: 0; font-size: 14px; font-weight: 600; color: var(--accent);
-  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; color: var(--accent); }
   header .meta { color: var(--muted); font-size: 12px; }
   header .meta b { color: var(--fg); font-weight: 600; }
   main {
     display: grid;
-    grid-template-rows: 1fr auto;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 1px;
+    background: #30363d;
     height: calc(100vh - 41px);
-  }
-  #ssh { border-bottom: 1px solid #30363d; }
-  #bottom {
-    display: grid; grid-template-columns: 1fr 1fr;
-    height: 45vh; min-height: 220px;
   }
   .pane {
     display: flex; flex-direction: column; min-height: 0; overflow: hidden;
     background: var(--panel);
   }
-  .pane + .pane { border-left: 1px solid #30363d; }
   .pane .title {
     padding: 6px 10px; background: var(--panel2); color: var(--muted);
     font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
     border-bottom: 1px solid #30363d;
     display: flex; justify-content: space-between; align-items: center;
   }
+  .pane.errors .title { color: var(--error); }
   .pane .title .status { font-size: 10px; color: var(--info); }
   .pane .title .status.off { color: var(--error); }
   pre.log {
@@ -65,9 +61,12 @@
   .l-warn  { color: var(--warn); }
   .l-info  { color: var(--info); }
   .l-debug { color: var(--debug); }
-  /* tiny scrollbar */
   pre.log::-webkit-scrollbar { width: 10px; }
   pre.log::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+  .pane.errors pre.log:empty::before {
+    content: 'No errors yet.';
+    color: var(--muted);
+  }
 </style>
 </head>
 <body>
@@ -82,29 +81,33 @@
 </header>
 
 <main>
-  <section class="pane" id="ssh">
+  <section class="pane">
     <div class="title">
-      <span>ssh session  (session.log)</span>
-      <span class="status" id="s-session">live</span>
+      <span>wb_agent  (wb_agent.log)</span>
+      <span class="status" id="s-wb">live</span>
     </div>
-    <pre class="log" id="log-session"></pre>
+    <pre class="log" id="log-wb"></pre>
   </section>
-
-  <section id="bottom">
-    <section class="pane">
-      <div class="title">
-        <span>wb_agent  (wb_agent.log)</span>
-        <span class="status" id="s-wb">live</span>
-      </div>
-      <pre class="log" id="log-wb"></pre>
-    </section>
-    <section class="pane">
-      <div class="title">
-        <span>wb_fe_agent  (wb_fe_agent.log)</span>
-        <span class="status" id="s-fe">live</span>
-      </div>
-      <pre class="log" id="log-fe"></pre>
-    </section>
+  <section class="pane">
+    <div class="title">
+      <span>wb_fe_agent  (wb_fe_agent.log)</span>
+      <span class="status" id="s-fe">live</span>
+    </div>
+    <pre class="log" id="log-fe"></pre>
+  </section>
+  <section class="pane errors">
+    <div class="title">
+      <span>wb_agent &mdash; ERRORS only</span>
+      <span class="status" id="s-wb-err">live</span>
+    </div>
+    <pre class="log" id="log-wb-err"></pre>
+  </section>
+  <section class="pane errors">
+    <div class="title">
+      <span>wb_fe_agent &mdash; ERRORS only</span>
+      <span class="status" id="s-fe-err">live</span>
+    </div>
+    <pre class="log" id="log-fe-err"></pre>
   </section>
 </main>
 
@@ -113,7 +116,6 @@
   const RX_WARN  = /(WARN(ING)?)/i;
   const RX_INFO  = /(INFO)/;
   const RX_DEBUG = /(DEBUG|TRACE)/;
-  // strip CSI ANSI escape sequences (we re-color in CSS)
   const RX_ANSI  = /\x1B\[[0-9;]*[A-Za-z]/g;
 
   function classify(line) {
@@ -124,28 +126,56 @@
     return '';
   }
 
-  function attach(streamName, paneId, statusId) {
-    const pane = document.getElementById(paneId);
-    const status = document.getElementById(statusId);
-    let pinned = true;
+  const MAX_LINES = 2000;
+  const FLUSH_MS = 50;
 
-    pane.addEventListener('scroll', () => {
-      pinned = (pane.scrollTop + pane.clientHeight + 4) >= pane.scrollHeight;
+  function attach(streamName, paneIds, statusIds, errorsOnly) {
+    paneIds = Array.isArray(paneIds) ? paneIds : [paneIds];
+    statusIds = Array.isArray(statusIds) ? statusIds : [statusIds];
+    errorsOnly = errorsOnly || [];
+    const panes = paneIds.map(id => document.getElementById(id));
+    const statuses = statusIds.map(id => document.getElementById(id));
+    const pinned = panes.map(() => true);
+
+    panes.forEach((pane, i) => {
+      pane.addEventListener('scroll', () => {
+        pinned[i] = (pane.scrollTop + pane.clientHeight + 4) >= pane.scrollHeight;
+      });
     });
+
+    const queues = panes.map(() => []);
+    let scheduled = false;
+
+    function flush() {
+      scheduled = false;
+      panes.forEach((pane, i) => {
+        if (!queues[i].length) return;
+        const frag = document.createDocumentFragment();
+        for (const line of queues[i]) {
+          const cls = classify(line);
+          const span = document.createElement('span');
+          if (cls) span.className = cls;
+          span.appendChild(document.createTextNode(line + '\n'));
+          frag.appendChild(span);
+        }
+        queues[i] = [];
+        pane.appendChild(frag);
+        while (pane.childElementCount > MAX_LINES) pane.removeChild(pane.firstChild);
+        if (pinned[i]) pane.scrollTop = pane.scrollHeight;
+      });
+    }
 
     const es = new EventSource('/stream/' + streamName);
     es.onmessage = (ev) => {
       const raw = ev.data.replace(RX_ANSI, '');
-      const cls = classify(raw);
-      const span = document.createElement('span');
-      if (cls) span.className = cls;
-      span.appendChild(document.createTextNode(raw + '\n'));
-      pane.appendChild(span);
-      if (pinned) pane.scrollTop = pane.scrollHeight;
+      panes.forEach((_pane, i) => {
+        if (errorsOnly[i] && !RX_ERROR.test(raw)) return;
+        queues[i].push(raw);
+      });
+      if (!scheduled) { scheduled = true; setTimeout(flush, FLUSH_MS); }
     };
     es.onerror = () => {
-      status.textContent = 'closed';
-      status.classList.add('off');
+      statuses.forEach(s => { s.textContent = 'closed'; s.classList.add('off'); });
     };
   }
 
@@ -157,9 +187,8 @@
     document.title = `zssh: ${m.epic||'?'} / ${m.task||'?'} / ${m.target||'?'}`;
   }).catch(()=>{});
 
-  attach('session', 'log-session', 's-session');
-  attach('wb',      'log-wb',      's-wb');
-  attach('fe',      'log-fe',      's-fe');
+  attach('wb', ['log-wb', 'log-wb-err'], ['s-wb', 's-wb-err'], [false, true]);
+  attach('fe', ['log-fe', 'log-fe-err'], ['s-fe', 's-fe-err'], [false, true]);
 </script>
 </body>
 </html>

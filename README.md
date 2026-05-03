@@ -1,47 +1,33 @@
 # zssh-record
 
-Auto-record SSH sessions to DNOS lab devices, organized by Jira **Epic** and **Testing Task**, with live colorized side panes for `wb_agent` and `wb_fe_agent` logs.
+Transparently record SSH sessions to DNOS lab devices, organized by Jira **Epic** and **Testing Task**. Live wb_agent / wb_fe_agent logs in your browser. Auto-attach `session.log` to the testing task on exit.
+
+| Mac command | What happens |
+|---|---|
+| `ssh -r <target>`  | Plain SSH session, recorded silently. On exit, `session.log` uploads to the Jira testing task. |
+| `ssh -rv <target>` | Same as `-r` plus a 4-pane live HTML viewer in your default browser. |
+| `ssh -v <target>`  | Same browser viewer, but **no recording** and **no Jira upload**. Use when you just want to see live wb_agent / wb_fe_agent. |
+| `ssh ...`          | Untouched - normal `/usr/bin/ssh`. |
+
+Browser layout (`-rv` and `-v`):
 
 ```
-ssh -r YE21F5VV0000EP2
-   Continue on SW-217283 / SW-262109 ? [Y/n]:        <- one keystroke if same epic+task
-   recording: ~/zohar/SW-217283/SW-262109/20260429-104812-YE21F5VV0000EP2/
-
-ssh -rv YE21F5VV0000EP2                              <- same as -r, plus live HTML viewer
-   viewer:    http://127.0.0.1:<port>/   (browser opens automatically)
++-----------------------------------------------------+
+|  zssh-record   epic SW-... | task SW-... | target.. |
++----------------------------+------------------------+
+|  wb_agent (live, full)     |  wb_fe_agent (full)    |
++----------------------------+------------------------+
+|  wb_agent - ERRORS only    |  wb_fe_agent - ERRORS  |
++----------------------------+------------------------+
 ```
 
-You get one tmux session with three panes:
-
-```
-+-----------------------------------------------------------+
-|  ssh dnroot@<target>                  (typescript: full)  |
-|                                                           |
-+-------------------------+---------------------------------+
-| tail wb_agent  (color)  |  tail wb_fe_agent (color)       |
-+-------------------------+---------------------------------+
-```
-
-Yellow = WARN, red = ERROR/FATAL, green = INFO, dim = DEBUG.
-
-With `-rv` you also get a browser tab fed by Server-Sent Events:
-
-```
-+-----------------------------------------------------------+
-|  zssh-record   epic SW-217283 | task SW-262109 | target.. |
-+-----------------------------------------------------------+
-|  ssh session  (live tail of session.log, colorized)       |
-|                                                           |
-+-------------------------+---------------------------------+
-|  wb_agent (live)        |  wb_fe_agent (live)             |
-+-------------------------+---------------------------------+
-```
+Color rules: red = `ERROR/FATAL/CRIT/Traceback`, yellow = `WARN/WARNING`, green = `INFO`, dim = `DEBUG/TRACE`.
 
 ---
 
-## Install (macOS or Linux)
+## Install (Mac side)
 
-One line:
+One line, in a Mac terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zkeiserman-dn/zssh-record/main/install.sh | bash
@@ -50,11 +36,34 @@ curl -fsSL https://raw.githubusercontent.com/zkeiserman-dn/zssh-record/main/inst
 The installer:
 
 - clones to `~/zohar/zssh/`
-- hooks an `ssh()` shell function into `~/.zshrc` (and `~/.bashrc` if present) so that **`ssh -r <target>`** triggers the recorder while plain `ssh ...` is unchanged
+- hooks an `ssh()` shell function into `~/.zshrc` (and `~/.bashrc` if present) so that **`ssh -r`**, **`ssh -rv`**, and **`ssh -v`** trigger the recorder; plain `ssh ...` is unchanged
 - writes a default `~/.zssh.conf` you can edit
-- reminds you to `brew install tmux` on macOS if missing
+- on first run, pushes your SSH key to the dev VM (asks `ZSSH_DEV_PASSWORD` once via `expect`; never again afterwards)
 
-Open a new terminal (or `source ~/.zshrc`) once after install.
+Edit `~/.zssh.conf` once with your dev-VM hostname and password:
+
+```bash
+ZSSH_DEV_VM="<your>-dev"
+ZSSH_DEV_PASSWORD="<your-dev-vm-password>"   # only used for one-time ssh-copy-id
+```
+
+## Install (dev VM side)
+
+The recorder runs on your dev VM. Clone there too and add credentials:
+
+```bash
+ssh dn@<your>-dev
+git clone https://github.com/zkeiserman-dn/zssh-record.git ~/zohar/zssh
+cat >> ~/.zssh.conf <<'EOF'
+export JIRA_EMAIL='you@drivenets.com'
+export JIRA_API_TOKEN='ATATT...your-token...'
+EOF
+chmod 600 ~/.zssh.conf
+```
+
+Token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
+
+Open a new terminal on your Mac (or `source ~/.zshrc`) once after install.
 
 ---
 

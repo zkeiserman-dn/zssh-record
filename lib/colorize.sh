@@ -27,8 +27,12 @@ zssh_colorize_stream() {
   '
 }
 
-case "${1:-}" in
-  stream) zssh_colorize_stream ;;
-  "")     : ;; # being sourced
-  *)      echo "usage: $0 stream" >&2; exit 2 ;;
-esac
+# Only act on positional args when this file is *executed* (not sourced).
+# Sourced parents inherit positional params, so checking $1 alone is unsafe.
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
+  case "${1:-}" in
+    stream) zssh_colorize_stream ;;
+    "")     echo "usage: $0 stream" >&2; exit 2 ;;
+    *)      echo "usage: $0 stream" >&2; exit 2 ;;
+  esac
+fi

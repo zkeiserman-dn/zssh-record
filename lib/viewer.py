@@ -9,7 +9,7 @@ Routes:
   GET /stream/wb         -> SSE tail -f of wb_agent.log
   GET /stream/fe         -> SSE tail -f of wb_fe_agent.log
 
-Bound to 127.0.0.1 only. Quits on Ctrl-C / SIGTERM.
+Bind address comes from argv[3] (default 0.0.0.0). Quits on Ctrl-C / SIGTERM.
 """
 
 import os
@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 OUT_DIR = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.getcwd()
+BIND = sys.argv[3] if len(sys.argv) > 3 else "0.0.0.0"
 
 LOGS = {
     "session": os.path.join(OUT_DIR, "session.log"),
@@ -97,7 +98,13 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # Start from the beginning so user sees recent context
+        # Seek to the END of the file: each browser tab only sees lines that
+        # arrive AFTER it connects.  No backfill of historical content.
+        try:
+            fh.seek(0, 2)
+        except Exception:
+            pass
+
         last_keepalive = time.time()
         try:
             while True:
@@ -132,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadingHTTPServer((BIND, PORT), Handler)
     server.daemon_threads = True
 
     def stop(*_):
@@ -145,7 +152,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
 
     actual_port = server.server_address[1]
-    sys.stdout.write(f"[zssh-viewer] serving {OUT_DIR} on http://127.0.0.1:{actual_port}/\n")
+    sys.stdout.write(f"[zssh-viewer] serving {OUT_DIR} on http://{BIND}:{actual_port}/\n")
     sys.stdout.flush()
     try:
         server.serve_forever()

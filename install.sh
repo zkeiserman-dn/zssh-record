@@ -21,6 +21,9 @@ mkdir -p "$ZOHAR_ROOT"
 if [ -d "$ZSSH_DIR/.git" ]; then
   echo "[install] refreshing $ZSSH_DIR"
   ( cd "$ZSSH_DIR" && git fetch origin main && git reset --hard origin/main )
+elif [ -f "$ZSSH_DIR/zssh.sh" ]; then
+  # tarball install path: files are already in place, nothing to clone.
+  echo "[install] using existing files in $ZSSH_DIR (tarball install)"
 else
   echo "[install] cloning $ZSSH_REPO_URL -> $ZSSH_DIR"
   git clone "$ZSSH_REPO_URL" "$ZSSH_DIR"
@@ -31,29 +34,49 @@ chmod +x "$ZSSH_DIR/zssh.sh" "$ZSSH_DIR/install.sh" 2>/dev/null || true
 # default config
 if [ ! -f "$CONFIG_FILE" ]; then
   cat > "$CONFIG_FILE" <<'EOF'
-# zssh-record per-user config (sourced from zssh.sh)
+# zssh-record per-user config (sourced from zssh.sh and zssh-fn.sh).
 # Edit any of these to taste; remove a line to use the built-in default.
 
-# SSH user for DNOS devices
-# ZSSH_USER="dnroot"
+# ----- Mac side (zssh-fn.sh) -----
+# Hostname/alias of your dev VM (must be reachable via plain `ssh <name>`):
+# ZSSH_DEV_VM="zkeiserman-dev"
+# TCP port forwarded for the live HTML viewer when using `ssh -rv`:
+# ZSSH_VIEWER_PORT=8765
 
+# ----- Dev VM side (zssh.sh) -----
+# SSH user + password for DNOS devices (used via sshpass for non-interactive panes):
+# ZSSH_USER="dnroot"
+# ZSSH_DEVICE_PASSWORD="dnroot"
 # Commands tailed in side panes after SSH'ing to <target>.
-# Each is run as: ssh dnroot@<target> '<cmd>'
-# Replace these with whatever your DNOS image needs.
+# Each is run as:  ssh dnroot@<target> '<cmd>'
 # ZSSH_WB_AGENT_CMD='request shell node-id 1 "tail -f -n 50 /var/log/dn/wb_agent.log"'
 # ZSSH_WB_FE_AGENT_CMD='request shell node-id 1 "tail -f -n 50 /var/log/dn/wb_fe_agent.log"'
-
-# Tmux pane layout: main-horizontal | tiled | even-vertical
+# Tmux pane layout:  main-horizontal | tiled | even-vertical
 # ZSSH_TMUX_LAYOUT="main-horizontal"
-
-# Disable auto-update (1=on, 0=off)
+# Disable auto-update (1=on, 0=off):
 # ZSSH_SELF_UPDATE=1
+
+# ----- Jira upload (dev VM side; only when JIRA_EMAIL+JIRA_API_TOKEN set) -----
+# Each session.log is uploaded as an attachment to the testing-task you
+# entered (e.g. SW-262109).  Token: https://id.atlassian.com/manage-profile/security/api-tokens
+# export JIRA_BASE="https://drivenets.atlassian.net"
+# export JIRA_EMAIL="you@drivenets.com"
+# export JIRA_API_TOKEN="ATATT...your-token..."
 EOF
   echo "[install] wrote default config: $CONFIG_FILE"
 fi
 
 # hook into shell
 hook_line=". \"$ZSSH_DIR/zssh-fn.sh\"   # zssh-record: enables 'ssh -r <target>'"
+
+# Ensure at least one rc file exists for the user's interactive shell.
+# macOS ships zsh by default with no ~/.zshrc - we create it on first install.
+case "${SHELL:-}" in
+  */zsh) [ -f "$HOME/.zshrc"  ] || touch "$HOME/.zshrc"  ;;
+  */bash)[ -f "$HOME/.bashrc" ] || touch "$HOME/.bashrc" ;;
+  *)     [ -f "$HOME/.zshrc"  ] || touch "$HOME/.zshrc"  ;;
+esac
+
 for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
   [ -f "$rc" ] || continue
   if ! grep -Fq "zssh-record:" "$rc"; then
