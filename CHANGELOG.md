@@ -2,6 +2,22 @@
 
 All notable changes to **zssh-record** are tracked here.
 
+## 0.7.0 - 2026-05-04
+
+- **Composable flags `-r`, `-v`, `-t` (and any combination)**:
+  - `r` = record + Jira upload on exit
+  - `v` = open live HTML viewer in browser
+  - `t` = sync the device clock from the dev VM (`time_check.py` autofix)
+  - Any 1-3 character combination works: `ssh -r`, `ssh -v`, `ssh -t`, `ssh -rv`, `ssh -rt`, `ssh -vt`, `ssh -rvt`. Order is irrelevant (`-rvt` and `-tvr` are equivalent).
+- The Mac wrapper prints a one-line mode banner up front:
+  `[zssh] mode: record=ON  viewer=ON  time-sync=ON`
+- Internally each character flips an env var the dev-VM `zssh.sh` honours:
+  - `r` not set -> `ZSSH_NO_RECORD=1`
+  - `v` set -> `ZSSH_VIEWER=1` + `ZSSH_VIEWER_PORT=<port>`
+  - `t` set -> `ZSSH_TIME_AUTOFIX=1` (the existing `time_check.py` will switch the device to `system timing-mode manual` and `set system datetime <UTC-now>` when drift exceeds the threshold)
+
+
+
 ## 0.6.0 - 2026-05-03
 
 - **New `ssh -v <target>` view-only mode**: same browser viewer (wb_agent + wb_fe_agent live panes, errors-only panes) but skips Epic/Task prompts, skips `script` typescript recording, and skips Jira upload at session end. Useful when you just want the live agent log panes without keeping any artefacts.
