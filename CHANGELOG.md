@@ -2,6 +2,21 @@
 
 All notable changes to **zssh-record** are tracked here.
 
+## 0.7.1 - 2026-05-04
+
+- **Fix: "Continue on EPIC / TASK ?" prompt now handles non-yes/no answers correctly.**
+  - Previously any input other than `n`/`N`/`no` was silently treated as "yes",
+    so typing a new ticket (e.g. `SW-194386`) at that prompt continued on the
+    *old* epic+task instead of switching. The new behavior:
+    - empty / `y` / `yes` -> continue on cached epic+task (unchanged)
+    - `n` / `no`          -> ask for both epic and task fresh (unchanged)
+    - a Jira-shaped ID (e.g. `SW-194386`, `sw194386`) -> treat as "no, switch
+      to this epic"; only the task is asked next, with no stale default
+    - anything else (typo) -> ask for both fresh (was: silently kept the
+      cached values - a footgun)
+
+
+
 ## 0.7.0 - 2026-05-04
 
 - **Composable flags `-r`, `-v`, `-t` (and any combination)**:

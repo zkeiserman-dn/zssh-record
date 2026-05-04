@@ -12,17 +12,34 @@ zssh_load_state() {
 }
 
 # Ask the user whether to continue on the cached Epic+Task.
-# Returns 0 if the cached values should be reused, 1 otherwise
-# (no cached state, empty values, or user answered "n").
+# Returns 0 if the cached values should be reused, 1 otherwise.
+# Behavior on "other" answers:
+#   - empty / y / yes  -> reuse cached  (return 0)
+#   - n / no           -> ask both fresh (return 1)
+#   - a Jira-shaped ID -> "no, switch to this epic": exports ZSSH_NEW_EPIC
+#                         so the caller can skip the epic prompt and only ask
+#                         for the task. (return 1)
+#   - anything else    -> ask both fresh (return 1)  -- conservative; the
+#                         old "default to yes on garbage" silently kept the
+#                         wrong epic/task on a typo.
 zssh_confirm_continue() {
+  ZSSH_NEW_EPIC=""
   if [ -z "$ZSSH_LAST_EPIC" ] || [ -z "$ZSSH_LAST_TASK" ]; then
     return 1
   fi
   printf 'Continue on %s / %s ? [Y/n]: ' "$ZSSH_LAST_EPIC" "$ZSSH_LAST_TASK" >&2
   read -r ans || return 1
   case "$ans" in
-    n|N|no|NO|No) return 1 ;;
-    *) return 0 ;;
+    ""|y|Y|yes|YES|Yes) return 0 ;;
+    n|N|no|NO|No)       return 1 ;;
+    *)
+      local norm
+      norm="$(zssh_normalize_id "$ans")"
+      if printf '%s' "$norm" | grep -qE '^[A-Z]+-[0-9]+$'; then
+        ZSSH_NEW_EPIC="$norm"
+      fi
+      return 1
+      ;;
   esac
 }
 

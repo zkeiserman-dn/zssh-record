@@ -96,7 +96,15 @@ else
     ZSSH_EPIC="$ZSSH_LAST_EPIC"
     ZSSH_TASK="$ZSSH_LAST_TASK"
   else
-    zssh_prompt_epic
+    if [ -n "${ZSSH_NEW_EPIC:-}" ]; then
+      # User typed a Jira-shaped ID at the "Continue?" prompt - treat as the
+      # new epic and skip the epic prompt. Clear the cached task default so
+      # we don't suggest the previous epic's task on the new one.
+      ZSSH_EPIC="$ZSSH_NEW_EPIC"
+      ZSSH_LAST_TASK=""
+    else
+      zssh_prompt_epic
+    fi
     zssh_prompt_task
   fi
   zssh_save_state
