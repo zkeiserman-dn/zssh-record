@@ -1,3 +1,7 @@
+# keep stray policer-epic / test-script work out of this repo
+scripts/
+docs/
+
 # local state and recordings (never commit)
 .zssh-state
 *.log
