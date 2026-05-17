@@ -23,11 +23,24 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 OUT_DIR = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.getcwd()
 BIND = sys.argv[3] if len(sys.argv) > 3 else "0.0.0.0"
 
-LOGS = {
-    "session": os.path.join(OUT_DIR, "session.log"),
-    "wb": os.path.join(OUT_DIR, "wb_agent.log"),
-    "fe": os.path.join(OUT_DIR, "wb_fe_agent.log"),
-}
+# Static entries
+LOGS = {"session": os.path.join(OUT_DIR, "session.log")}
+import glob as _glob
+
+
+def _refresh_logs():
+    """Re-scan OUT_DIR for wb_*_ncp*.log files (called on each request)."""
+    for path in sorted(_glob.glob(os.path.join(OUT_DIR, "wb_*_ncp*.log"))):
+        name = os.path.basename(path).replace(".log", "")
+        if name not in LOGS:
+            LOGS[name] = path
+    # Fallback to legacy single-NCP names
+    if not any(k.startswith("wb_agent_ncp") for k in LOGS):
+        for legacy in ("wb_agent.log", "wb_fe_agent.log"):
+            p = os.path.join(OUT_DIR, legacy)
+            n = legacy.replace(".log", "_ncp0")
+            if os.path.exists(p) and n not in LOGS:
+                LOGS[n] = p
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -48,6 +61,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self):
+        _refresh_logs()
         path = self.path.split("?", 1)[0]
         if path == "/" or path == "/index.html":
             try:
@@ -63,6 +77,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, fh.read(), "application/json")
             except FileNotFoundError:
                 self._send(200, b"{}", "application/json")
+            return
+
+        if path == "/streams.json":
+            import json as _json
+            streams = sorted(k for k in LOGS if k.startswith("wb_"))
+            self._send(200, _json.dumps(streams).encode(), "application/json")
             return
 
         if path.startswith("/stream/"):

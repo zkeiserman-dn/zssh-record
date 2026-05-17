@@ -129,46 +129,57 @@ EOF
 
 session_log="$out_dir/session.log"
 timing="$out_dir/session.timing"
-wb_log="$out_dir/wb_agent.log"
-fe_log="$out_dir/wb_fe_agent.log"
 viewer_log="$out_dir/viewer.log"
 
-# pre-create empty log files so the viewer / tail can open them immediately
-: > "$wb_log" "$fe_log" "$session_log" "$viewer_log"
+: > "$session_log" "$viewer_log"
 
-# 4a) verify the device's clock is in sync with the dev VM (fast paramiko probe).
-#     Prints one summary line; only changes anything if ZSSH_TIME_AUTOFIX=1.
+# 4a) verify the device's clock is in sync with the dev VM.
 TIME_CHECK="$ZSSH_DIR/lib/time_check.py"
 if [ -f "$TIME_CHECK" ] && command -v python3 >/dev/null 2>&1; then
   python3 "$TIME_CHECK" "$target" 2>&1 || true
 fi
 
-# 4b) launch background workers (silent).
-# If the user didn't override ZSSH_WB_AGENT_CMD / ZSSH_WB_FE_AGENT_CMD, use the
-# built-in DNOS-shell tailer that does:
-#     ssh dnroot@<target>
-#     run start shell ncp <ZSSH_NCP_ID>     # password: dnroot
-#     cd <ZSSH_TRACES_DIR>
-#     tail -f <agent>
-DNOS_TAIL="$ZSSH_DIR/lib/dnos_log_tail.py"
-if [ -z "$ZSSH_WB_AGENT_CMD" ] && [ -x "$DNOS_TAIL" -o -f "$DNOS_TAIL" ] && command -v python3 >/dev/null 2>&1; then
-  ZSSH_WB_AGENT_CMD="python3 $(printf %q "$DNOS_TAIL") $(printf %q "$target") wb_agent $(printf %q "$ZSSH_NCP_ID")"
+# 4b) discover NCPs: SA=single NCP, cluster=multiple.
+#     discover_ncps.py prints e.g. "SA 0" or "CL 3 6 7".
+DISCOVER="$ZSSH_DIR/lib/discover_ncps.py"
+DEPLOYMENT="SA"
+NCP_IDS=("${ZSSH_NCP_ID:-0}")
+if [ -f "$DISCOVER" ] && command -v python3 >/dev/null 2>&1; then
+  _disc="$(python3 "$DISCOVER" "$target" 2>/dev/null | tail -1)"
+  if [ -n "$_disc" ]; then
+    DEPLOYMENT="${_disc%% *}"
+    read -ra NCP_IDS <<< "${_disc#* }"
+  fi
 fi
-if [ -z "$ZSSH_WB_FE_AGENT_CMD" ] && [ -x "$DNOS_TAIL" -o -f "$DNOS_TAIL" ] && command -v python3 >/dev/null 2>&1; then
-  ZSSH_WB_FE_AGENT_CMD="python3 $(printf %q "$DNOS_TAIL") $(printf %q "$target") wb_fe_agent $(printf %q "$ZSSH_NCP_ID")"
-fi
+echo "  system   : $DEPLOYMENT (NCP IDs: ${NCP_IDS[*]})"
 
+# 4c) launch background log workers (one wb_agent + one wb_fe_agent per NCP).
+DNOS_TAIL="$ZSSH_DIR/lib/dnos_log_tail.py"
 WORKER_PIDS=()
-if [ -n "$ZSSH_WB_AGENT_CMD" ]; then
-  ( bash -c "$ZSSH_WB_AGENT_CMD" >> "$wb_log" 2>&1 ) &
-  WORKER_PIDS+=($!)
-  disown $! 2>/dev/null || true
-fi
-if [ -n "$ZSSH_WB_FE_AGENT_CMD" ]; then
-  ( bash -c "$ZSSH_WB_FE_AGENT_CMD" >> "$fe_log" 2>&1 ) &
-  WORKER_PIDS+=($!)
-  disown $! 2>/dev/null || true
-fi
+LOG_FILES=()
+
+for ncp_id in "${NCP_IDS[@]}"; do
+  wb_log="$out_dir/wb_agent_ncp${ncp_id}.log"
+  fe_log="$out_dir/wb_fe_agent_ncp${ncp_id}.log"
+  : > "$wb_log" "$fe_log"
+  LOG_FILES+=("$wb_log" "$fe_log")
+
+  if [ -z "$ZSSH_WB_AGENT_CMD" ] && [ -f "$DNOS_TAIL" ] && command -v python3 >/dev/null 2>&1; then
+    ( python3 "$DNOS_TAIL" "$target" wb_agent "$ncp_id" >> "$wb_log" 2>&1 ) &
+    WORKER_PIDS+=($!); disown $! 2>/dev/null || true
+  elif [ -n "$ZSSH_WB_AGENT_CMD" ]; then
+    ( bash -c "$ZSSH_WB_AGENT_CMD" >> "$wb_log" 2>&1 ) &
+    WORKER_PIDS+=($!); disown $! 2>/dev/null || true
+  fi
+
+  if [ -z "$ZSSH_WB_FE_AGENT_CMD" ] && [ -f "$DNOS_TAIL" ] && command -v python3 >/dev/null 2>&1; then
+    ( python3 "$DNOS_TAIL" "$target" wb_fe_agent "$ncp_id" >> "$fe_log" 2>&1 ) &
+    WORKER_PIDS+=($!); disown $! 2>/dev/null || true
+  elif [ -n "$ZSSH_WB_FE_AGENT_CMD" ]; then
+    ( bash -c "$ZSSH_WB_FE_AGENT_CMD" >> "$fe_log" 2>&1 ) &
+    WORKER_PIDS+=($!); disown $! 2>/dev/null || true
+  fi
+done
 
 # 5) live HTML viewer (only when ssh -rv was used).
 # Free the viewer port first - a previous orphan zssh.sh / viewer.py from a
@@ -222,8 +233,9 @@ cleanup() {
   echo
   echo "[zssh] session ended: $out_dir/"
   echo "[zssh]   - session.log     ($(stat -c%s "$session_log" 2>/dev/null || echo 0) bytes)"
-  echo "[zssh]   - wb_agent.log    ($(stat -c%s "$wb_log"      2>/dev/null || echo 0) bytes)"
-  echo "[zssh]   - wb_fe_agent.log ($(stat -c%s "$fe_log"      2>/dev/null || echo 0) bytes)"
+  for _lf in "${LOG_FILES[@]}"; do
+    echo "[zssh]   - $(basename "$_lf")  ($(stat -c%s "$_lf" 2>/dev/null || echo 0) bytes)"
+  done
 }
 trap cleanup EXIT HUP INT TERM
 
